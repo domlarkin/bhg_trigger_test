@@ -36,7 +36,7 @@ import rospy
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
-from image_transport import image_transport
+
  
 NUM_IMAGES = 10  # number of images to grab
 
@@ -61,12 +61,12 @@ def configure_trigger(cam):
      :rtype: bool
     """
 
-    print "*** CONFIGURING TRIGGER ***\n"
+    print("*** CONFIGURING TRIGGER ***\n")
 
     if CHOSEN_TRIGGER == TriggerType.SOFTWARE:
-        print "Software trigger chosen..."
+        print("Software trigger chosen...")
     elif CHOSEN_TRIGGER == TriggerType.HARDWARE:
-        print "Hardware trigger chosen..."
+        print("Hardware trigger chosen...")
 
     try:
         result = True
@@ -75,18 +75,18 @@ def configure_trigger(cam):
         # The trigger must be disabled in order to configure whether the source
         # is software or hardware.
         if cam.TriggerMode.GetAccessMode() != PySpin.RW:
-            print "Unable to disable trigger mode (node retrieval). Aborting..."
+            print("Unable to disable trigger mode (node retrieval). Aborting...")
             return False
 
         cam.TriggerMode.SetValue(PySpin.TriggerMode_Off)
 
-        print "Trigger mode disabled..."
+        print("Trigger mode disabled...")
 
         # Select trigger source
         # The trigger source must be set to hardware or software while trigger
 		# mode is off.
         if cam.TriggerSource.GetAccessMode() != PySpin.RW:
-            print "Unable to get trigger source (node retrieval). Aborting..."
+            print("Unable to get trigger source (node retrieval). Aborting...")
             return False
 
         if CHOSEN_TRIGGER == TriggerType.SOFTWARE:
@@ -98,10 +98,10 @@ def configure_trigger(cam):
         # Once the appropriate trigger source has been set, turn trigger mode
         # on in order to retrieve images using the trigger.
         cam.TriggerMode.SetValue(PySpin.TriggerMode_On)
-        print "Trigger mode turned back on..."
+        print("Trigger mode turned back on...")
 
     except PySpin.SpinnakerException as ex:
-        print "Error: %s" % ex
+        print("Error: %s" % ex)
         return False
 
     return result
@@ -131,7 +131,7 @@ def grab_next_image_by_trigger(cam):
 
             # Execute software trigger
             if cam.TriggerSoftware.GetAccessMode() != PySpin.WO:
-                print "Unable to execute trigger. Aborting..."
+                print("Unable to execute trigger. Aborting...")
                 return False
 
             cam.TriggerSoftware.Execute()
@@ -139,10 +139,12 @@ def grab_next_image_by_trigger(cam):
             # TODO: Blackfly and Flea3 GEV cameras need 2 second delay after software trigger
 
         elif CHOSEN_TRIGGER == TriggerType.HARDWARE:
-            print "Use the hardware to trigger image acquisition."
+            # print("Use the hardware to trigger image acquisition.")
+            pass
+            
 
     except PySpin.SpinnakerException as ex:
-        print "Error: %s" % ex
+        print("Error: %s" % ex)
         return False
 
     return result
@@ -159,48 +161,52 @@ def acquire_images(cam):
     :rtype: bool
     """
 
-    print "*** IMAGE ACQUISITION ***\n"
+    print("*** IMAGE ACQUISITION ***\n")
     try:
         result = True
 
         # Set acquisition mode to continuous
         if cam.AcquisitionMode.GetAccessMode() != PySpin.RW:
-            print "Unable to set acquisition mode to continuous. Aborting..."
+            print("Unable to set acquisition mode to continuous. Aborting...")
             return False
 
         cam.AcquisitionMode.SetValue(PySpin.AcquisitionMode_Continuous)
-        print "Acquisition mode set to continuous..."
+        print("Acquisition mode set to continuous...")
 
         #  Begin acquiring images
         cam.BeginAcquisition()
 
-        print "Acquiring images..."
+        print("Acquiring images...")
 
         # Get device serial number for filename
         device_serial_number = ""
         if cam.TLDevice.DeviceSerialNumber.GetAccessMode() == PySpin.RO:
             device_serial_number = cam.TLDevice.DeviceSerialNumber.GetValue()
 
-            print "Device serial number retrieved as %s..." % device_serial_number
+            print("Device serial number retrieved as %s..." % device_serial_number)
 
         # Retrieve, convert, and save images
         #for i in range(NUM_IMAGES):
-        self.image_pub = rospy.Publisher("image_color",Image)
-        
+        image_pub = rospy.Publisher("image_color",Image, queue_size=10)
+        bridge = CvBridge()
         r = rospy.Rate(30) # 5hz
+        last_time = rospy.get_time()
         while not rospy.is_shutdown():        
         
             try:
 
                 #  Retrieve the next image from the trigger
+                #  Does nothing if Hardware trigger except print line.
                 result &= grab_next_image_by_trigger(cam)
-
+                print("================================================================================")
+                print('Grab next image time: %f' % (rospy.get_time()-  last_time))                
                 #  Retrieve next received image
                 image_result = cam.GetNextImage()
+                print('Get next image time: %f' % (rospy.get_time()-  last_time))
 
                 #  Ensure image completion
                 if image_result.IsIncomplete():
-                    print "Image incomplete with image status %d ..." % image_result.GetImageStatus()
+                    print("Image incomplete with image status %d ..." % image_result.GetImageStatus())
 
                 else:
 
@@ -213,10 +219,12 @@ def acquire_images(cam):
                     #image_converted = image_result.Convert(PySpin.PixelFormat_Mono8, PySpin.HQ_LINEAR)
                     image_converted = image_result.Convert(PySpin.PixelFormat_BGR8, PySpin.HQ_LINEAR)
                     image_data = image_converted.GetNDArray()
+                    
+                    print('Image Conversion time: %f' % (rospy.get_time()-  last_time))
                     #cv2.imshow("frame",image_data)
                     #cv2.waitKey(1)
                     try:
-                      self.image_pub.publish(self.bridge.cv2_to_imgmsg(image_data, "bgr8"))
+                      image_pub.publish(bridge.cv2_to_imgmsg(image_data, "bgr8"))
                     except CvBridgeError as e:
                       print(e)
 
@@ -237,14 +245,16 @@ def acquire_images(cam):
                     #print ""
 
             except PySpin.SpinnakerException as ex:
-                print "Error: %s" % ex
+                print("Error: %s" % ex)
                 return False
+            print('Time to complete loop is %f' % (rospy.get_time()-  last_time))
+            last_time = rospy.get_time()
             r.sleep()
         # End acquisition
         cam.EndAcquisition()
 
     except PySpin.SpinnakerException as ex:
-        print "Error: %s" % ex
+        print("Error: %s" % ex)
         return False
 
     return result
@@ -265,15 +275,15 @@ def reset_trigger(cam):
         # The trigger must be disabled in order to configure whether the source
         # is software or hardware.
         if cam.TriggerMode.GetAccessMode() != PySpin.RW:
-            print "Unable to disable trigger mode (node retrieval). Aborting..."
+            print("Unable to disable trigger mode (node retrieval). Aborting...")
             return False
 
         cam.TriggerMode.SetValue(PySpin.TriggerMode_Off)
 
-        print "Trigger mode disabled..."
+        print("Trigger mode disabled...")
 
     except PySpin.SpinnakerException as ex:
-        print "Error: %s" % ex
+        print("Error: %s" % ex)
         result = False
 
     return result
@@ -291,7 +301,7 @@ def print_device_info(nodemap):
     :rtype: bool
     """
 
-    print "*** DEVICE INFORMATION ***\n"
+    print("*** DEVICE INFORMATION ***\n")
 
     try:
         result = True
@@ -301,14 +311,14 @@ def print_device_info(nodemap):
             features = node_device_information.GetFeatures()
             for feature in features:
                 node_feature = PySpin.CValuePtr(feature)
-                print "%s: %s" % (node_feature.GetName(),
-                                  node_feature.ToString() if PySpin.IsReadable(node_feature) else "Node not readable")
+                print("%s: %s" % (node_feature.GetName(),
+                                  node_feature.ToString() if PySpin.IsReadable(node_feature) else "Node not readable"))
 
         else:
-            print "Device control information not available."
+            print("Device control information not available.")
 
     except PySpin.SpinnakerException as ex:
-        print "Error: %s" % ex
+        print("Error: %s" % ex)
         return False
 
     return result
@@ -353,7 +363,7 @@ def run_single_camera(cam):
         cam.DeInit()
 
     except PySpin.SpinnakerException as ex:
-        print "Error: %s" % ex
+        print("Error: %s" % ex)
         result = False
 
     return result
@@ -378,7 +388,8 @@ def main():
 
     num_cameras = cam_list.GetSize()
 
-    print "Number of cameras detected: %d" % num_cameras
+
+    print("Number of cameras detected: %d" % num_cameras)
 
     # Finish if there are no cameras
     if num_cameras == 0:
@@ -388,7 +399,7 @@ def main():
         # Release system
         system.ReleaseInstance()
 
-        print "Not enough cameras!"
+        print("Not enough cameras!")
         raw_input("Done! Press Enter to exit...")
         return False
 
@@ -396,10 +407,10 @@ def main():
     for i in range(num_cameras):
         cam = cam_list.GetByIndex(i)
 
-        print "Running example for camera %d..." % i
+        print("Running example for camera %d..." % i)
 
         result = run_single_camera(cam)
-        print "Camera %d example complete... \n" % i
+        print("Camera %d example complete... \n" % i)
 
     # Release reference to camera
     # NOTE: Unlike the C++ examples, we cannot rely on pointer objects being automatically
@@ -413,8 +424,8 @@ def main():
     # Release instance
     system.ReleaseInstance()
 
-    raw_input("Done! Press Enter to exit...")
-    return result
+#    raw_input("Done! Press Enter to exit...")
+#    return result
 
 
 if __name__ == "__main__":
