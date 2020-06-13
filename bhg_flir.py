@@ -201,7 +201,7 @@ def acquire_images(cam):
                 print("================================================================================")
                 print('Grab next image time: %f' % (rospy.get_time()-  last_time))                
                 #  Retrieve next received image
-                image_result = cam.GetNextImage()
+                image_result = cam.GetNextImage(500) # timeout in milliseconds
                 print('Get next image time: %f' % (rospy.get_time()-  last_time))
 
                 #  Ensure image completion
@@ -246,7 +246,10 @@ def acquire_images(cam):
 
             except PySpin.SpinnakerException as ex:
                 print("Error: %s" % ex)
-                return False
+#                if ('1011' in ex):
+#                    print("PySpin timeout waiting for trigger")
+#                else:
+#                    return False
             print('Time to complete loop is %f' % (rospy.get_time()-  last_time))
             last_time = rospy.get_time()
             r.sleep()
